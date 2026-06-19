@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models.models import DispatchStatus, PriorityLevel, QueueStatus, VehicleStatus
+from app.models.models import DispatchStatus, FaultStatus, PriorityLevel, QueueStatus, VehicleStatus
 from app.rules.business_rules import BusinessRuleViolation
 from app.schemas.schemas import (
     DispatchCreate,
@@ -14,8 +14,13 @@ from app.schemas.schemas import (
     DispatchRead,
     QueueCreate,
     QueueRead,
+    RoutePointCreate,
+    RoutePointRead,
     VehicleCreate,
     VehicleDisinfect,
+    VehicleFaultCreate,
+    VehicleFaultRead,
+    VehicleFaultResolve,
     VehicleRead,
 )
 from app.services.dispatch_service import DispatchService
@@ -88,5 +93,48 @@ async def arrive(dispatch_id: UUID, db: AsyncSession = Depends(get_db)):
     svc = DispatchService(db)
     try:
         return await svc.arrive(dispatch_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/vehicles/{vehicle_id}/faults", response_model=VehicleFaultRead, status_code=201)
+async def report_fault(vehicle_id: UUID, data: VehicleFaultCreate, db: AsyncSession = Depends(get_db)):
+    svc = DispatchService(db)
+    try:
+        return await svc.report_fault(vehicle_id, data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/vehicles/{vehicle_id}/faults", response_model=list[VehicleFaultRead])
+async def list_faults(
+    vehicle_id: UUID,
+    status: FaultStatus | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    svc = DispatchService(db)
+    return await svc.list_faults(vehicle_id, status)
+
+
+@router.post("/faults/{fault_id}/resolve", response_model=VehicleFaultRead)
+async def resolve_fault(fault_id: UUID, data: VehicleFaultResolve, db: AsyncSession = Depends(get_db)):
+    svc = DispatchService(db)
+    try:
+        return await svc.resolve_fault(fault_id, data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/orders/{dispatch_id}/route-points", response_model=RoutePointRead, status_code=201)
+async def report_route_point(
+    dispatch_id: UUID,
+    data: RoutePointCreate,
+    planned_lat: float | None = None,
+    planned_lon: float | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    svc = DispatchService(db)
+    try:
+        return await svc.report_route_point(dispatch_id, data, planned_lat, planned_lon)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -19,6 +19,7 @@ class Settings(BaseSettings):
 
     weight_diff_threshold_pct: float = 5.0
     weight_diff_abs_threshold_kg: float = 200.0
+    route_deviation_threshold_km: float = 2.0
 
     @property
     def database_url(self) -> str:

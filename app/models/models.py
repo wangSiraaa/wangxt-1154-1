@@ -55,6 +55,16 @@ class WeighingStatus(str, enum.Enum):
     REVIEW_REQUIRED = "REVIEW_REQUIRED"
 
 
+class FaultStatus(str, enum.Enum):
+    OPEN = "OPEN"
+    RESOLVED = "RESOLVED"
+
+
+class ReviewType(str, enum.Enum):
+    WEIGHT_DIFF = "WEIGHT_DIFF"
+    ROUTE_DEVIATION = "ROUTE_DEVIATION"
+
+
 class ReviewStatus(str, enum.Enum):
     PENDING = "PENDING"
     APPROVED = "APPROVED"
@@ -98,6 +108,9 @@ class TransferQueue(Base):
     priority: Mapped[PriorityLevel] = mapped_column(Enum(PriorityLevel), default=PriorityLevel.NORMAL, nullable=False)
     status: Mapped[QueueStatus] = mapped_column(Enum(QueueStatus), default=QueueStatus.WAITING, nullable=False)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
+    overflow_approved_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    overflow_approval_remark: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    overflow_approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     dispatched_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -120,6 +133,23 @@ class Vehicle(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     dispatch_orders: Mapped[List["DispatchOrder"]] = relationship(back_populates="vehicle")
+    faults: Mapped[List["VehicleFault"]] = relationship(back_populates="vehicle", order_by="VehicleFault.created_at.desc()")
+
+
+class VehicleFault(Base):
+    __tablename__ = "vehicle_faults"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    vehicle_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("vehicles.id"), nullable=False)
+    fault_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[FaultStatus] = mapped_column(Enum(FaultStatus), default=FaultStatus.OPEN, nullable=False)
+    reported_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    resolved_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    vehicle: Mapped["Vehicle"] = relationship(back_populates="faults")
 
 
 class DispatchOrder(Base):
@@ -132,6 +162,8 @@ class DispatchOrder(Base):
     dispatcher_id: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[DispatchStatus] = mapped_column(Enum(DispatchStatus), default=DispatchStatus.CREATED, nullable=False)
     departure_weight_kg: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    route_deviation_detected: Mapped[bool] = mapped_column(default=False, nullable=False)
+    route_deviation_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     departed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     arrived_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -155,6 +187,8 @@ class WeighingRecord(Base):
     weight_diff_rate_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     outbound_weighed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     inbound_weighed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    outbound_operator: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    inbound_operator: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     status: Mapped[WeighingStatus] = mapped_column(
         Enum(WeighingStatus), default=WeighingStatus.OUTBOUND_ONLY, nullable=False
     )
@@ -169,17 +203,32 @@ class ReviewOrder(Base):
     __tablename__ = "review_orders"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    weighing_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("weighing_records.id"), unique=True, nullable=False
+    weighing_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        Uuid, ForeignKey("weighing_records.id"), unique=True, nullable=True
     )
     dispatch_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("dispatch_orders.id"), nullable=False
     )
     reason: Mapped[str] = mapped_column(Text, nullable=False)
+    review_type: Mapped[ReviewType] = mapped_column(Enum(ReviewType), default=ReviewType.WEIGHT_DIFF, nullable=False)
     status: Mapped[ReviewStatus] = mapped_column(Enum(ReviewStatus), default=ReviewStatus.PENDING, nullable=False)
     reviewed_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     remark: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    weighing: Mapped["WeighingRecord"] = relationship(back_populates="review")
+    weighing: Mapped[Optional["WeighingRecord"]] = relationship(back_populates="review")
+
+
+class RoutePoint(Base):
+    __tablename__ = "route_points"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    dispatch_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("dispatch_orders.id"), nullable=False)
+    latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    is_deviation: Mapped[bool] = mapped_column(default=False, nullable=False)
+    deviation_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    dispatch: Mapped["DispatchOrder"] = relationship()

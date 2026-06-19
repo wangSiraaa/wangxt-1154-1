@@ -12,19 +12,35 @@ from app.models.models import (
     DispatchOrder,
     DispatchStatus,
     DisinfectionStatus,
+    FaultStatus,
     PriorityLevel,
     QueueStatus,
+    ReviewOrder,
+    ReviewStatus,
+    ReviewType,
+    RoutePoint,
     TransferQueue,
     Vehicle,
+    VehicleFault,
     VehicleStatus,
 )
 from app.rules.business_rules import (
     BusinessRuleViolation,
     check_box_can_queue,
     check_queue_can_dispatch,
+    check_route_deviation,
     check_vehicle_can_dispatch,
+    check_vehicle_faults,
 )
-from app.schemas.schemas import DispatchCreate, QueueCreate, VehicleCreate, VehicleDisinfect
+from app.schemas.schemas import (
+    DispatchCreate,
+    QueueCreate,
+    RoutePointCreate,
+    VehicleCreate,
+    VehicleDisinfect,
+    VehicleFaultCreate,
+    VehicleFaultResolve,
+)
 
 
 class DispatchService:
@@ -69,12 +85,50 @@ class DispatchService:
     async def get_vehicle(self, vehicle_id: UUID) -> Vehicle | None:
         return await self.db.get(Vehicle, vehicle_id)
 
+    async def report_fault(self, vehicle_id: UUID, data: VehicleFaultCreate) -> VehicleFault:
+        vehicle = await self.db.get(Vehicle, vehicle_id)
+        if vehicle is None:
+            raise ValueError(f"车辆 {vehicle_id} 不存在")
+        fault = VehicleFault(
+            vehicle_id=vehicle_id,
+            fault_code=data.fault_code,
+            description=data.description,
+            status=FaultStatus.OPEN,
+            reported_by=data.reported_by,
+        )
+        self.db.add(fault)
+        await self.db.flush()
+        await self.db.refresh(fault)
+        return fault
+
+    async def resolve_fault(self, fault_id: UUID, data: VehicleFaultResolve) -> VehicleFault:
+        fault = await self.db.get(VehicleFault, fault_id)
+        if fault is None:
+            raise ValueError(f"故障记录 {fault_id} 不存在")
+        if fault.status != FaultStatus.OPEN:
+            raise ValueError(f"故障记录状态为 {fault.status.value}，不可处理")
+        fault.status = FaultStatus.RESOLVED
+        fault.resolved_by = data.resolved_by
+        fault.resolved_at = datetime.now(timezone.utc)
+        await self.db.flush()
+        await self.db.refresh(fault)
+        return fault
+
+    async def list_faults(self, vehicle_id: UUID | None = None, status: FaultStatus | None = None) -> list[VehicleFault]:
+        stmt = select(VehicleFault).order_by(VehicleFault.created_at.desc())
+        if vehicle_id is not None:
+            stmt = stmt.where(VehicleFault.vehicle_id == vehicle_id)
+        if status is not None:
+            stmt = stmt.where(VehicleFault.status == status)
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
     async def enqueue(self, data: QueueCreate) -> TransferQueue:
         box = await self.db.get(CompressionBox, data.box_id)
         if box is None:
             raise ValueError(f"压缩箱 {data.box_id} 不存在")
 
-        check_box_can_queue(box, data.priority)
+        check_box_can_queue(box, data.priority, data.overflow_approved_by)
 
         max_pos_result = await self.db.execute(
             select(func.coalesce(func.max(TransferQueue.position), 0)).where(
@@ -88,9 +142,13 @@ class DispatchService:
             priority=data.priority,
             status=QueueStatus.WAITING,
             position=max_pos + 1,
+            overflow_approved_by=data.overflow_approved_by,
+            overflow_approval_remark=data.overflow_approval_remark,
+            overflow_approved_at=datetime.now(timezone.utc) if data.overflow_approved_by else None,
         )
         self.db.add(queue_entry)
-        box.status = BoxStatus.FULL
+        if box.status != BoxStatus.FULL:
+            box.status = BoxStatus.FULL
         await self.db.flush()
         await self.db.refresh(queue_entry)
         await self.db.refresh(box)
@@ -115,6 +173,12 @@ class DispatchService:
             raise ValueError(f"车辆 {data.vehicle_id} 不存在")
 
         check_vehicle_can_dispatch(vehicle)
+
+        faults_result = await self.db.execute(
+            select(VehicleFault).where(VehicleFault.vehicle_id == data.vehicle_id)
+        )
+        faults = list(faults_result.scalars().all())
+        check_vehicle_faults(vehicle, faults)
 
         order = DispatchOrder(
             queue_id=data.queue_id,
@@ -178,3 +242,43 @@ class DispatchService:
 
     async def get_dispatch(self, dispatch_id: UUID) -> DispatchOrder | None:
         return await self.db.get(DispatchOrder, dispatch_id)
+
+    async def report_route_point(
+        self,
+        dispatch_id: UUID,
+        data: RoutePointCreate,
+        planned_lat: float | None = None,
+        planned_lon: float | None = None,
+    ) -> RoutePoint:
+        dispatch = await self.db.get(DispatchOrder, dispatch_id)
+        if dispatch is None:
+            raise ValueError(f"派车单 {dispatch_id} 不存在")
+        if dispatch.status not in (DispatchStatus.DEPARTED, DispatchStatus.IN_TRANSIT):
+            raise ValueError(f"派车单状态为 {dispatch.status.value}，不在运输途中")
+
+        deviation_result = check_route_deviation(data.latitude, data.longitude, planned_lat, planned_lon)
+
+        route_point = RoutePoint(
+            dispatch_id=dispatch_id,
+            latitude=data.latitude,
+            longitude=data.longitude,
+            is_deviation=deviation_result.is_deviation,
+            deviation_reason=deviation_result.reason if deviation_result.is_deviation else None,
+        )
+        self.db.add(route_point)
+
+        if deviation_result.is_deviation:
+            dispatch.route_deviation_detected = True
+            dispatch.route_deviation_reason = deviation_result.reason
+            dispatch.status = DispatchStatus.IN_TRANSIT
+            review = ReviewOrder(
+                dispatch_id=dispatch_id,
+                reason=deviation_result.reason,
+                review_type=ReviewType.ROUTE_DEVIATION,
+                status=ReviewStatus.PENDING,
+            )
+            self.db.add(review)
+
+        await self.db.flush()
+        await self.db.refresh(route_point)
+        return route_point

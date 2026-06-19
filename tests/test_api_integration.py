@@ -154,6 +154,28 @@ async def test_enqueue_not_full_box_blocked_by_business_rule(
 
 
 @pytest.mark.asyncio
+async def test_enqueue_not_full_box_with_overflow_approval(
+    client: AsyncClient, seed_station_and_box
+):
+    station, box = seed_station_and_box
+    assert box.status == BoxStatus.EMPTY
+
+    response = await client.post(
+        "/api/dispatch/queue",
+        json={
+            "box_id": str(box.id),
+            "priority": "URGENT",
+            "overflow_approved_by": "supervisor_chen",
+            "overflow_approval_remark": "突发溢满审批通过",
+        },
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["overflow_approved_by"] == "supervisor_chen"
+    assert data["overflow_approved_at"] is not None
+
+
+@pytest.mark.asyncio
 async def test_enqueue_full_box_succeeds(
     client: AsyncClient, seed_station_and_box
 ):

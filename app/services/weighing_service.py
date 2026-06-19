@@ -11,6 +11,7 @@ from app.models.models import (
     DispatchStatus,
     ReviewOrder,
     ReviewStatus,
+    ReviewType,
     WeighingRecord,
     WeighingStatus,
 )
@@ -41,12 +42,14 @@ class WeighingService:
                 dispatch_id=dispatch_id,
                 station_outbound_weight_kg=data.station_outbound_weight_kg,
                 outbound_weighed_at=datetime.now(timezone.utc),
+                outbound_operator=data.outbound_operator,
                 status=WeighingStatus.OUTBOUND_ONLY,
             )
             self.db.add(record)
         else:
             existing.station_outbound_weight_kg = data.station_outbound_weight_kg
             existing.outbound_weighed_at = datetime.now(timezone.utc)
+            existing.outbound_operator = data.outbound_operator
             existing.status = WeighingStatus.OUTBOUND_ONLY
             record = existing
 
@@ -75,6 +78,7 @@ class WeighingService:
 
         record.plant_inbound_weight_kg = data.plant_inbound_weight_kg
         record.inbound_weighed_at = datetime.now(timezone.utc)
+        record.inbound_operator = data.inbound_operator
 
         diff_result = compute_weight_diff(record.station_outbound_weight_kg, data.plant_inbound_weight_kg)
         record.weight_diff_kg = diff_result.diff_kg
@@ -86,6 +90,7 @@ class WeighingService:
                 weighing_id=record.id,
                 dispatch_id=dispatch_id,
                 reason=diff_result.reason,
+                review_type=ReviewType.WEIGHT_DIFF,
                 status=ReviewStatus.PENDING,
             )
             self.db.add(review)

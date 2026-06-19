@@ -9,9 +9,11 @@ from app.models.models import (
     BoxStatus,
     DisinfectionStatus,
     DispatchStatus,
+    FaultStatus,
     PriorityLevel,
     QueueStatus,
     ReviewStatus,
+    ReviewType,
     VehicleStatus,
     WeighingStatus,
 )
@@ -60,6 +62,8 @@ class BoxRead(BaseModel):
 class QueueCreate(BaseModel):
     box_id: UUID
     priority: PriorityLevel = PriorityLevel.NORMAL
+    overflow_approved_by: str | None = Field(None, max_length=64)
+    overflow_approval_remark: str | None = None
 
 
 class QueueRead(BaseModel):
@@ -68,6 +72,9 @@ class QueueRead(BaseModel):
     priority: PriorityLevel
     status: QueueStatus
     position: int
+    overflow_approved_by: str | None
+    overflow_approval_remark: str | None
+    overflow_approved_at: datetime | None
     created_at: datetime
     dispatched_at: datetime | None
 
@@ -96,6 +103,30 @@ class VehicleRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class VehicleFaultCreate(BaseModel):
+    fault_code: str = Field(..., max_length=64)
+    description: str
+    reported_by: str = Field(..., max_length=64)
+
+
+class VehicleFaultResolve(BaseModel):
+    resolved_by: str = Field(..., max_length=64)
+
+
+class VehicleFaultRead(BaseModel):
+    id: UUID
+    vehicle_id: UUID
+    fault_code: str
+    description: str
+    status: FaultStatus
+    reported_by: str
+    resolved_by: str | None
+    resolved_at: datetime | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class DispatchCreate(BaseModel):
     queue_id: UUID
     vehicle_id: UUID
@@ -114,6 +145,8 @@ class DispatchRead(BaseModel):
     dispatcher_id: str
     status: DispatchStatus
     departure_weight_kg: float | None
+    route_deviation_detected: bool
+    route_deviation_reason: str | None
     created_at: datetime
     departed_at: datetime | None
     arrived_at: datetime | None
@@ -123,10 +156,12 @@ class DispatchRead(BaseModel):
 
 class WeighingOutbound(BaseModel):
     station_outbound_weight_kg: float = Field(..., gt=0)
+    outbound_operator: str = Field(..., max_length=64)
 
 
 class WeighingInbound(BaseModel):
     plant_inbound_weight_kg: float = Field(..., gt=0)
+    inbound_operator: str = Field(..., max_length=64)
 
 
 class WeighingRead(BaseModel):
@@ -138,6 +173,8 @@ class WeighingRead(BaseModel):
     weight_diff_rate_pct: float | None
     outbound_weighed_at: datetime | None
     inbound_weighed_at: datetime | None
+    outbound_operator: str | None
+    inbound_operator: str | None
     status: WeighingStatus
     created_at: datetime
     updated_at: datetime
@@ -147,9 +184,10 @@ class WeighingRead(BaseModel):
 
 class ReviewRead(BaseModel):
     id: UUID
-    weighing_id: UUID
+    weighing_id: UUID | None
     dispatch_id: UUID
     reason: str
+    review_type: ReviewType
     status: ReviewStatus
     reviewed_by: str | None
     remark: str | None
@@ -163,3 +201,20 @@ class ReviewApprove(BaseModel):
     approved: bool
     reviewed_by: str = Field(..., max_length=64)
     remark: str | None = None
+
+
+class RoutePointCreate(BaseModel):
+    latitude: float
+    longitude: float
+
+
+class RoutePointRead(BaseModel):
+    id: UUID
+    dispatch_id: UUID
+    latitude: float
+    longitude: float
+    is_deviation: bool
+    deviation_reason: str | None
+    recorded_at: datetime
+
+    model_config = {"from_attributes": True}

@@ -1,13 +1,16 @@
 from dataclasses import dataclass
+from typing import List
 
 from app.config import settings
 from app.models.models import (
     BoxStatus,
     CompressionBox,
     DisinfectionStatus,
+    FaultStatus,
     PriorityLevel,
     TransferQueue,
     Vehicle,
+    VehicleFault,
     VehicleStatus,
 )
 
@@ -27,17 +30,24 @@ class WeightDiffResult:
     reason: str
 
 
-def check_box_can_queue(box: CompressionBox, priority: PriorityLevel) -> None:
-    if box.status != BoxStatus.FULL:
-        if priority in (PriorityLevel.HIGH, PriorityLevel.URGENT):
-            raise BusinessRuleViolation(
-                "BOX_NOT_FULL_PRIORITY",
-                f"压缩箱 {box.box_code} 未满载，不能使用 {priority.value} 优先级排队",
-            )
+def check_box_can_queue(
+    box: CompressionBox,
+    priority: PriorityLevel,
+    overflow_approved_by: str | None = None,
+) -> None:
+    if box.status == BoxStatus.FULL:
+        return
+    if overflow_approved_by is not None:
+        return
+    if priority in (PriorityLevel.HIGH, PriorityLevel.URGENT):
         raise BusinessRuleViolation(
-            "BOX_NOT_FULL",
-            f"压缩箱 {box.box_code} 状态为 {box.status.value}，未满载不能入队",
+            "BOX_NOT_FULL_PRIORITY",
+            f"压缩箱 {box.box_code} 未满载，不能使用 {priority.value} 优先级排队",
         )
+    raise BusinessRuleViolation(
+        "BOX_NOT_FULL",
+        f"压缩箱 {box.box_code} 状态为 {box.status.value}，未满载不能入队",
+    )
 
 
 def check_vehicle_can_dispatch(vehicle: Vehicle) -> None:
@@ -50,6 +60,16 @@ def check_vehicle_can_dispatch(vehicle: Vehicle) -> None:
         raise BusinessRuleViolation(
             "VEHICLE_DISINFECTION_INCOMPLETE",
             f"车辆 {vehicle.plate_number} 消杀状态为 {vehicle.disinfection_status.value}，消杀未完成不能出车",
+        )
+
+
+def check_vehicle_faults(vehicle: Vehicle, faults: List[VehicleFault]) -> None:
+    open_faults = [f for f in faults if f.status == FaultStatus.OPEN]
+    if open_faults:
+        codes = ", ".join(f.fault_code for f in open_faults)
+        raise BusinessRuleViolation(
+            "VEHICLE_HAS_OPEN_FAULTS",
+            f"车辆 {vehicle.plate_number} 存在未处理故障 [{codes}]，不能调度",
         )
 
 
@@ -88,3 +108,36 @@ def compute_weight_diff(
         needs_review=needs_review,
         reason=reason,
     )
+
+
+@dataclass(frozen=True)
+class RouteDeviationResult:
+    is_deviation: bool
+    reason: str
+
+
+def check_route_deviation(
+    latitude: float,
+    longitude: float,
+    planned_lat: float | None = None,
+    planned_lon: float | None = None,
+) -> RouteDeviationResult:
+    if planned_lat is None or planned_lon is None:
+        return RouteDeviationResult(is_deviation=False, reason="")
+
+    from math import acos, cos, radians, sin
+
+    lat1, lon1 = radians(planned_lat), radians(planned_lon)
+    lat2, lon2 = radians(latitude), radians(longitude)
+    delta = acos(
+        sin(lat1) * sin(lat2) + cos(lat1) * cos(lat2) * cos(lon2 - lon1)
+    )
+    distance_km = delta * 6371.0
+
+    threshold_km = settings.route_deviation_threshold_km
+    if distance_km > threshold_km:
+        return RouteDeviationResult(
+            is_deviation=True,
+            reason=f"路线偏离 {distance_km:.2f}km，超过阈值 {threshold_km}km",
+        )
+    return RouteDeviationResult(is_deviation=False, reason="")

@@ -11,13 +11,17 @@ from app.models.models import (
     DisinfectionStatus,
     DispatchOrder,
     DispatchStatus,
+    FaultStatus,
     PriorityLevel,
     QueueStatus,
     ReviewOrder,
     ReviewStatus,
+    ReviewType,
+    RoutePoint,
     Station,
     TransferQueue,
     Vehicle,
+    VehicleFault,
     VehicleStatus,
     WeighingRecord,
     WeighingStatus,
@@ -105,3 +109,17 @@ async def sample_queue(db_session: AsyncSession, sample_full_box: CompressionBox
     db_session.add(queue)
     await db_session.flush()
     return queue
+
+
+@pytest_asyncio.fixture
+async def sample_fault(db_session: AsyncSession, sample_vehicle: Vehicle):
+    fault = VehicleFault(
+        vehicle_id=sample_vehicle.id,
+        fault_code="BRAKE_WEAR",
+        description="刹车片磨损超标",
+        status=FaultStatus.OPEN,
+        reported_by="mechanic_liu",
+    )
+    db_session.add(fault)
+    await db_session.flush()
+    return fault
