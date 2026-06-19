@@ -52,6 +52,7 @@ class WeighingService:
 
         dispatch.departure_weight_kg = data.station_outbound_weight_kg
         await self.db.flush()
+        await self.db.refresh(record)
         return record
 
     async def record_inbound(self, dispatch_id: UUID, data: WeighingInbound) -> WeighingRecord:
@@ -93,6 +94,7 @@ class WeighingService:
             dispatch.status = DispatchStatus.COMPLETED
 
         await self.db.flush()
+        await self.db.refresh(record)
         return record
 
     async def list_weighings(self, status: WeighingStatus | None = None) -> list[WeighingRecord]:
@@ -142,4 +144,5 @@ class ReviewService:
         review.remark = data.remark
         review.reviewed_at = datetime.now(timezone.utc)
         await self.db.flush()
+        await self.db.refresh(review)
         return review

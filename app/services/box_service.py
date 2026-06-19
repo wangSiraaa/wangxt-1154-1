@@ -19,6 +19,7 @@ class BoxService:
         station = Station(name=data.name, address=data.address)
         self.db.add(station)
         await self.db.flush()
+        await self.db.refresh(station)
         return station
 
     async def list_stations(self) -> list[Station]:
@@ -34,6 +35,7 @@ class BoxService:
         )
         self.db.add(box)
         await self.db.flush()
+        await self.db.refresh(box)
         return box
 
     async def register_full(self, box_id: UUID, data: BoxRegisterFull) -> CompressionBox:
@@ -50,6 +52,7 @@ class BoxService:
         box.registered_full_at = datetime.now(timezone.utc)
         box.registered_by = data.registered_by
         await self.db.flush()
+        await self.db.refresh(box)
         return box
 
     async def list_boxes(self, station_id: UUID | None = None, status: BoxStatus | None = None) -> list[CompressionBox]:

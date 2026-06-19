@@ -40,6 +40,7 @@ class DispatchService:
         )
         self.db.add(vehicle)
         await self.db.flush()
+        await self.db.refresh(vehicle)
         return vehicle
 
     async def complete_disinfection(self, vehicle_id: UUID, data: VehicleDisinfect) -> Vehicle:
@@ -55,6 +56,7 @@ class DispatchService:
             vehicle.disinfection_status = DisinfectionStatus.PENDING
             vehicle.status = VehicleStatus.DISINFECTING
         await self.db.flush()
+        await self.db.refresh(vehicle)
         return vehicle
 
     async def list_vehicles(self, status: VehicleStatus | None = None) -> list[Vehicle]:
@@ -90,6 +92,8 @@ class DispatchService:
         self.db.add(queue_entry)
         box.status = BoxStatus.FULL
         await self.db.flush()
+        await self.db.refresh(queue_entry)
+        await self.db.refresh(box)
         return queue_entry
 
     async def list_queue(self, status: QueueStatus | None = None) -> list[TransferQueue]:
@@ -126,6 +130,9 @@ class DispatchService:
         vehicle.status = VehicleStatus.ON_DUTY
 
         await self.db.flush()
+        await self.db.refresh(order)
+        await self.db.refresh(queue_entry)
+        await self.db.refresh(vehicle)
         return order
 
     async def depart(self, dispatch_id: UUID, departure_weight_kg: float) -> DispatchOrder:
@@ -146,6 +153,7 @@ class DispatchService:
         order.departure_weight_kg = departure_weight_kg
         order.departed_at = datetime.now(timezone.utc)
         await self.db.flush()
+        await self.db.refresh(order)
         return order
 
     async def arrive(self, dispatch_id: UUID) -> DispatchOrder:
@@ -158,6 +166,7 @@ class DispatchService:
         order.status = DispatchStatus.ARRIVED
         order.arrived_at = datetime.now(timezone.utc)
         await self.db.flush()
+        await self.db.refresh(order)
         return order
 
     async def list_dispatches(self, status: DispatchStatus | None = None) -> list[DispatchOrder]:
